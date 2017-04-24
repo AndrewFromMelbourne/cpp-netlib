@@ -163,7 +163,9 @@ struct basic_client_facade {
         options.always_verify_peer(), options.openssl_certificate(),
         options.openssl_verify_path(), options.openssl_certificate_file(),
         options.openssl_private_key_file(), options.openssl_ciphers(),
-        options.openssl_options(), options.io_service(), options.timeout()));
+        options.openssl_options(), options.io_service(), options.timeout(),
+        options.remove_chunk_markers(), options.proxy_host(), options.proxy_port(),
+        options.proxy_username(), options.proxy_password()));
   }
 };
 

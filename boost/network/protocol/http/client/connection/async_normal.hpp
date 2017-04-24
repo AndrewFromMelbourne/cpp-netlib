@@ -21,6 +21,7 @@
 #include <boost/network/traits/istream.hpp>
 #include <boost/logic/tribool.hpp>
 #include <boost/network/protocol/http/parser/incremental.hpp>
+#include <boost/network/protocol/http/message.hpp>
 #include <boost/network/protocol/http/message/wrappers/uri.hpp>
 #include <boost/network/protocol/http/client/connection/async_protocol_handler.hpp>
 #include <boost/network/protocol/http/algorithms/linearize.hpp>
@@ -68,11 +69,20 @@ struct http_async_connection
       connection_delegate_ptr;
 
   http_async_connection(resolver_type& resolver, resolve_function resolve,
-                        bool follow_redirect, int timeout,
+                        bool follow_redirect, int timeout, bool remove_chunk_markers,
+                        optional<string_type> proxy_host,
+                        optional<string_type> proxy_port,
+                        optional<string_type> proxy_username,
+                        optional<string_type> proxy_password,
                         connection_delegate_ptr delegate)
       : timeout_(timeout),
         timer_(resolver.get_io_service()),
         is_timedout_(false),
+        remove_chunk_markers_(remove_chunk_markers),
+        proxy_host_(proxy_host),
+        proxy_port_(proxy_port),
+        proxy_username_(proxy_username),
+        proxy_password_(proxy_password),
         follow_redirect_(follow_redirect),
         resolver_(resolver),
         resolve_(resolve),
@@ -89,15 +99,24 @@ struct http_async_connection
                          body_generator_function_type generator) {
     response response_;
     this->init_response(response_, get_body);
+
+    boost::uint16_t port_ = port(request);
+    string_type host_ = host(request);
+    boost::uint16_t source_port = request.source_port();
+
+    string_type tcp_host = host_;
+
+    if (connect_via_proxy())
+    {
+      tcp_host = *proxy_host_;
+    }
+
     linearize(request, method, version_major, version_minor,
               std::ostreambuf_iterator<typename char_<Tag>::type>(
                   &command_streambuf));
     this->method = method;
-    boost::uint16_t port_ = port(request);
-	string_type host_ = host(request);
-	boost::uint16_t source_port = request.source_port();
 
-    resolve_(resolver_, host_, port_,
+    resolve_(resolver_, tcp_host, port_,
              request_strand_.wrap(boost::bind(
                  &this_type::handle_resolved, this_type::shared_from_this(),
                  host_, port_, source_port, get_body, callback,
@@ -140,15 +159,23 @@ struct http_async_connection
       // Here we deal with the case that there was an error encountered
       // and
       // that there's still more endpoints to try connecting to.
+
+      boost::uint16_t tcp_port = port;
+
+      if (connect_via_proxy()) {
+        tcp_port = boost::lexical_cast<boost::uint16_t>(*proxy_port_);
+      }
+
       resolver_iterator iter = boost::begin(endpoint_range);
-      asio::ip::tcp::endpoint endpoint(iter->endpoint().address(), port);
+      asio::ip::tcp::endpoint endpoint(iter->endpoint().address(), tcp_port);
       delegate_->connect(
-          endpoint, host, source_port,
+          endpoint, host, port, source_port,
           request_strand_.wrap(boost::bind(
               &this_type::handle_connected, this_type::shared_from_this(), host,
               port, source_port, get_body, callback, generator,
               std::make_pair(++iter, resolver_iterator()),
-              placeholders::error)));
+              placeholders::error)),
+          connect_via_proxy(), proxy_username_, proxy_password_);
     } else {
       set_errors(ec ? ec : boost::asio::error::host_not_found);
       boost::iterator_range<const char*> range;
@@ -176,12 +203,13 @@ struct http_async_connection
         resolver_iterator iter = boost::begin(endpoint_range);
         asio::ip::tcp::endpoint endpoint(iter->endpoint().address(), port);
         delegate_->connect(
-            endpoint, host, source_port,
+            endpoint, host, port, source_port,
             request_strand_.wrap(boost::bind(
                 &this_type::handle_connected, this_type::shared_from_this(),
                 host, port, source_port, get_body, callback, generator,
                 std::make_pair(++iter, resolver_iterator()),
-                placeholders::error)));
+                placeholders::error)),
+            connect_via_proxy(), proxy_username_, proxy_password_);
       } else {
         set_errors(ec ? ec : boost::asio::error::host_not_found);
         boost::iterator_range<const char*> range;
@@ -322,10 +350,24 @@ struct http_async_connection
             // has already been parsed appropriately and we're
             // looking to treat everything that remains in the
             // buffer.
-            typename protocol_base::buffer_type::const_iterator begin =
-                this->part_begin;
-            typename protocol_base::buffer_type::const_iterator end = begin;
-            std::advance(end, remainder);
+
+            this->partial_parsed.append(this->part_begin, remainder);
+            this->part_begin = this->part.begin();
+            string_type body_string;
+
+            if (remove_chunk_markers_ && this->is_chunk_encoding)
+            {
+                body_string = parse_chunk_encoding(this->partial_parsed, true);
+            }
+            else
+            {
+               body_string.swap(this->partial_parsed);
+            }
+
+            typename protocol_base::buffer_type::const_iterator
+                begin = body_string.c_str(),
+                end = begin;
+            std::advance(end, body_string.size());
 
             // We're setting the body promise here to an empty string
             // because
@@ -346,7 +388,7 @@ struct http_async_connection
                     &this_type::handle_received_data,
                     this_type::shared_from_this(), body, get_body, callback,
                     placeholders::error, placeholders::bytes_transferred)));
-          } else {
+           } else {
             // Here we handle the body data ourself and append to an
             // ever-growing string buffer.
             this->parse_body(
@@ -367,10 +409,24 @@ struct http_async_connection
             // the end
             // of the body processing chain.
             if (callback) {
+
+              this->partial_parsed.append(this->part_begin, bytes_transferred);
+              this->part_begin = this->part.begin();
+              string_type body_string;
+
+              if (remove_chunk_markers_ && this->is_chunk_encoding)
+              {
+                  body_string = parse_chunk_encoding(this->partial_parsed, true);
+              }
+              else
+              {
+                 body_string.swap(this->partial_parsed);
+              }
+
               typename protocol_base::buffer_type::const_iterator
-                  begin = this->part.begin(),
+                  begin = body_string.c_str(),
                   end = begin;
-              std::advance(end, bytes_transferred);
+              std::advance(end, body_string.size());
 
               // We call the callback function synchronously passing the
               // error
@@ -383,9 +439,9 @@ struct http_async_connection
               std::swap(body_string, this->partial_parsed);
               body_string.append(this->part.begin(), bytes_transferred);
               if (this->is_chunk_encoding)
-                this->body_promise.set_value(parse_chunk_encoding(body_string));
-              else
-                this->body_promise.set_value(body_string);
+                body_string = parse_chunk_encoding(body_string);
+
+              this->body_promise.set_value(body_string);
             }
             // TODO set the destination value somewhere!
             this->destination_promise.set_value("");
@@ -403,10 +459,25 @@ struct http_async_connection
               // callback from here and make sure we're getting more
               // data
               // right after.
-              typename protocol_base::buffer_type::const_iterator begin =
-                  this->part.begin();
-              typename protocol_base::buffer_type::const_iterator end = begin;
-              std::advance(end, bytes_transferred);
+
+              this->partial_parsed.append(this->part_begin, bytes_transferred);
+              this->part_begin = this->part.begin();
+              string_type body_string;
+
+              if (remove_chunk_markers_ && this->is_chunk_encoding)
+              {
+                  body_string = parse_chunk_encoding(this->partial_parsed, true);
+              }
+              else
+              {
+                 body_string.swap(this->partial_parsed);
+              }
+
+              typename protocol_base::buffer_type::const_iterator
+                  begin = body_string.c_str(),
+                  end = begin;
+              std::advance(end, body_string.size());
+
               callback(make_iterator_range(begin, end), ec);
               delegate_->read_some(
                   boost::asio::mutable_buffers_1(this->part.c_array(),
@@ -415,7 +486,7 @@ struct http_async_connection
                       &this_type::handle_received_data,
                       this_type::shared_from_this(), body, get_body, callback,
                       placeholders::error, placeholders::bytes_transferred)));
-            } else {
+              } else {
               // Here we don't have a body callback. Let's
               // make sure that we deal with the remainder
               // from the headers part in case we do have data
@@ -462,7 +533,7 @@ struct http_async_connection
     }
   }
 
-  string_type parse_chunk_encoding(string_type& body_string) {
+  string_type parse_chunk_encoding(string_type& body_string, bool update = false) {
     string_type body;
     string_type crlf = "\r\n";
 
@@ -482,16 +553,34 @@ struct http_async_connection
       if (len <= body_string.end() - iter) {
         body.insert(body.end(), iter, iter + len);
         std::advance(iter, len + 2);
+        begin = iter;
       }
-      begin = iter;
+      else
+      {
+        break;
+      }
     }
 
+    if (update)
+    {
+        body_string.erase(body_string.begin(), begin);
+    }
     return body;
+  }
+
+  bool connect_via_proxy() const
+  {
+    return (proxy_host_ && proxy_port_);
   }
 
   int timeout_;
   boost::asio::deadline_timer timer_;
   bool is_timedout_;
+  bool remove_chunk_markers_;
+  optional<string_type> proxy_host_;
+  optional<string_type> proxy_port_;
+  optional<string_type> proxy_username_;
+  optional<string_type> proxy_password_;
   bool follow_redirect_;
   resolver_type& resolver_;
   resolve_function resolve_;

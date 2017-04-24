@@ -31,7 +31,13 @@ struct client_options {
         openssl_options_(0),
         io_service_(),
         always_verify_peer_(false),
-        timeout_(0) {}
+        timeout_(0),
+        remove_chunk_markers_(false),
+        proxy_host_(),
+        proxy_port_(),
+        proxy_username_(),
+        proxy_password_()
+        {}
 
   client_options(client_options const& other)
       : cache_resolved_(other.cache_resolved_),
@@ -44,7 +50,12 @@ struct client_options {
         openssl_options_(other.openssl_options_),
         io_service_(other.io_service_),
         always_verify_peer_(other.always_verify_peer_),
-        timeout_(other.timeout_) {}
+        timeout_(other.timeout_),
+        remove_chunk_markers_(other.remove_chunk_markers_),
+        proxy_host_(other.proxy_host_),
+        proxy_port_(other.proxy_port_),
+        proxy_username_(other.proxy_username_),
+        proxy_password_(other.proxy_poassword_) {}
 
   client_options& operator=(client_options other) {
     other.swap(*this);
@@ -64,6 +75,11 @@ struct client_options {
     swap(io_service_, other.io_service_);
     swap(always_verify_peer_, other.always_verify_peer_);
     swap(timeout_, other.timeout_);
+    swap(remove_chunk_markers_, other.remove_chunk_markers_);
+    swap(proxy_host_, other.proxy_host_);
+    swap(proxy_port_, other.proxy_port_);
+    swap(proxy_username_, other.proxy_username_);
+    swap(proxy_password_, other.proxy_poassword_);
   }
 
   client_options& cache_resolved(bool v) {
@@ -121,6 +137,31 @@ struct client_options {
     return *this;
   }
 
+  client_options& remove_chunk_markers(bool v) {
+    remove_chunk_markers_ = v;
+    return *this;
+  }
+
+  client_options& proxy_host(string_type const& v) {
+    proxy_host_ = v;
+    return *this;
+  }
+
+  client_options& proxy_port(string_type const& v) {
+    proxy_port_ = v;
+    return *this;
+  }
+
+  client_options& proxy_username(string_type const& v) {
+    proxy_username_ = v;
+    return *this;
+  }
+
+  client_options& proxy_password(string_type const& v) {
+    proxy_password_ = v;
+    return *this;
+  }
+
   bool cache_resolved() const { return cache_resolved_; }
 
   bool follow_redirects() const { return follow_redirects_; }
@@ -155,6 +196,24 @@ struct client_options {
 
   int timeout() const { return timeout_; }
 
+  bool remove_chunk_markers() const { return remove_chunk_markers_; }
+
+  boost::optional<string_type> proxy_host() const {
+    return proxy_host_;
+  }
+
+  boost::optional<string_type> proxy_port() const {
+    return proxy_port_;
+  }
+
+  boost::optional<string_type> proxy_username() const {
+    return proxy_username_;
+  }
+
+  boost::optional<string_type> proxy_password() const {
+    return proxy_password_;
+  }
+
  private:
   bool cache_resolved_;
   bool follow_redirects_;
@@ -167,6 +226,11 @@ struct client_options {
   boost::shared_ptr<boost::asio::io_service> io_service_;
   bool always_verify_peer_;
   int timeout_;
+  bool remove_chunk_markers_;
+  boost::optional<string_type> proxy_host_;
+  boost::optional<string_type> proxy_port_;
+  boost::optional<string_type> proxy_username_;
+  boost::optional<string_type> proxy_password_;
 };
 
 template <class Tag>

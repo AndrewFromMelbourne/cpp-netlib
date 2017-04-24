@@ -13,8 +13,12 @@ namespace http {
 namespace impl {
 
 struct connection_delegate {
-  virtual void connect(asio::ip::tcp::endpoint &endpoint, std::string host, boost::uint16_t source_port,
-                       function<void(system::error_code const &)> handler) = 0;
+  virtual void connect(asio::ip::tcp::endpoint &endpoint, std::string host,
+                       boost::uint16_t port, boost::uint16_t source_port,
+                       function<void(system::error_code const &)> handler,
+                       bool connect_via_proxy,
+                       optional<std::string> proxy_username,
+                       optional<std::string> proxy_password) = 0;
   virtual void write(
       asio::streambuf &command_streambuf,
       function<void(system::error_code const &, size_t)> handler) = 0;

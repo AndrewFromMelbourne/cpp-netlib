@@ -38,7 +38,11 @@ struct async_connection_policy : resolver_policy<Tag>::type {
   struct connection_impl {
     connection_impl(bool follow_redirect, bool always_verify_peer,
                     resolve_function resolve, resolver_type& resolver,
-                    bool https, int timeout,
+                    bool https, int timeout, bool remove_chunk_markers,
+                    optional<string_type> const& proxy_host,
+                    optional<string_type> const& proxy_port,
+                    optional<string_type> const& proxy_username,
+                    optional<string_type> const& proxy_password,
                     optional<string_type> const& certificate_filename,
                     optional<string_type> const& verify_path,
                     optional<string_type> const& certificate_file,
@@ -48,8 +52,10 @@ struct async_connection_policy : resolver_policy<Tag>::type {
           Tag, version_major,
           version_minor>::new_connection(resolve, resolver, follow_redirect,
                                          always_verify_peer, https, timeout,
-                                         certificate_filename, verify_path,
-                                         certificate_file, private_key_file,
+                                         remove_chunk_markers, proxy_host,
+                                         proxy_port, proxy_username,
+                                         proxy_password, certificate_filename,
+                                         verify_path, certificate_file, private_key_file,
                                          ciphers, ssl_options);
     }
 
@@ -85,21 +91,36 @@ struct async_connection_policy : resolver_policy<Tag>::type {
                     this, boost::arg<1>(), boost::arg<2>(), boost::arg<3>(),
                     boost::arg<4>()),
         resolver, boost::iequals(protocol_, string_type("https")), timeout_,
-        certificate_filename, verify_path, certificate_file, private_key_file,
-        ciphers, ssl_options));
+        remove_chunk_markers_, proxy_host_, proxy_port_, proxy_username_, proxy_password_,
+        certificate_filename, verify_path, certificate_file,
+        private_key_file, ciphers, ssl_options));
     return connection_;
   }
 
   void cleanup() {}
 
   async_connection_policy(bool cache_resolved, bool follow_redirect,
-                          int timeout)
+                          int timeout, bool remove_chunk_markers,
+                          optional<string_type> const& proxy_host,
+                          optional<string_type> const& proxy_port,
+                          optional<string_type> const& proxy_username,
+                          optional<string_type> const& proxy_password)
       : resolver_base(cache_resolved),
         follow_redirect_(follow_redirect),
-        timeout_(timeout) {}
+        timeout_(timeout),
+        remove_chunk_markers_(remove_chunk_markers),
+        proxy_host_(proxy_host),
+        proxy_port_(proxy_port),
+        proxy_username_(proxy_username),
+        proxy_password_(proxy_password) {}
 
   bool follow_redirect_;
   int timeout_;
+  bool remove_chunk_markers_;
+  optional<string_type> proxy_host_;
+  optional<string_type> proxy_port_;
+  optional<string_type> proxy_username_;
+  optional<string_type> proxy_password_;
 };
 
 }  // namespace http

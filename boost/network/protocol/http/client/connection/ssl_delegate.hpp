@@ -9,8 +9,8 @@
 
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/ssl.hpp>
-#include <boost/network/protocol/http/client/connection/connection_delegate.hpp>
 #include <boost/optional.hpp>
+#include <boost/network/protocol/http/client/connection/connection_delegate.hpp>
 #include <boost/enable_shared_from_this.hpp>
 #include <boost/network/support/is_default_string.hpp>
 #include <boost/network/support/is_default_wstring.hpp>
@@ -29,8 +29,13 @@ struct ssl_delegate : connection_delegate,
                optional<std::string> private_key_file,
                optional<std::string> ciphers, long ssl_options);
 
-  virtual void connect(asio::ip::tcp::endpoint &endpoint, std::string host, boost::uint16_t source_port,
-                       function<void(system::error_code const &)> handler);
+  virtual void connect(asio::ip::tcp::endpoint &endpoint, std::string host,
+                       boost::uint16_t port, boost::uint16_t source_port,
+                       function<void(system::error_code const &)> handler,
+                       bool connect_via_proxy,
+                       optional<std::string> proxy_username,
+                       optional<std::string> proxy_password);
+
   virtual void write(
       asio::streambuf &command_streambuf,
       function<void(system::error_code const &, size_t)> handler);
@@ -52,12 +57,26 @@ struct ssl_delegate : connection_delegate,
   scoped_ptr<asio::ip::tcp::socket> tcp_socket_;
   scoped_ptr<asio::ssl::stream<asio::ip::tcp::socket&> > socket_;
   bool always_verify_peer_;
+  asio::streambuf response_buffer_;
 
   ssl_delegate(ssl_delegate const &);     // = delete
   ssl_delegate &operator=(ssl_delegate);  // = delete
 
   void handle_connected(system::error_code const &ec,
-                        function<void(system::error_code const &)> handler);
+                        function<void(system::error_code const &)> handler,
+                        bool connect_via_proxy,
+                        std::string const &host,
+                        boost::uint16_t port,
+                        optional<std::string> proxy_username,
+                        optional<std::string> proxy_password);
+
+  void handle_proxy_sent_request(function<void(system::error_code const &)> handler,
+                                 boost::system::error_code const& ec,
+                                 std::size_t bytes_transferred);
+
+  void handle_proxy_received_data(function<void(system::error_code const &)> handler,
+                                  boost::system::error_code const& ec,
+                                  std::size_t bytes_transferred);
 };
 
 } /* impl */

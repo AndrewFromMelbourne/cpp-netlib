@@ -37,14 +37,19 @@ struct async_client
   typedef function<bool(string_type&)> body_generator_function_type;
 
   async_client(bool cache_resolved, bool follow_redirect,
-               bool always_verify_peer, int timeout,
+               bool always_verify_peer, int timeout, bool remove_chunk_markers,
+               optional<string_type> const& proxy_host,
+               optional<string_type> const& proxy_port,
+               optional<string_type> const& proxy_username,
+               optional<string_type> const& proxy_password,
                boost::shared_ptr<boost::asio::io_service> service,
                optional<string_type> const& certificate_filename,
                optional<string_type> const& verify_path,
                optional<string_type> const& certificate_file,
                optional<string_type> const& private_key_file,
                optional<string_type> const& ciphers, long ssl_options)
-      : connection_base(cache_resolved, follow_redirect, timeout),
+      : connection_base(cache_resolved, follow_redirect, timeout, remove_chunk_markers,
+                        proxy_host, proxy_port, proxy_username, proxy_password),
         service_ptr(service.get()
                         ? service
                         : boost::make_shared<boost::asio::io_service>()),

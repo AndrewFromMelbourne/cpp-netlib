@@ -9,6 +9,7 @@
 
 #include <boost/network/protocol/http/client/connection/ssl_delegate.hpp>
 #include <boost/asio/ssl.hpp>
+#include <boost/asio/read_until.hpp>
 #include <boost/bind.hpp>
 
 boost::network::http::impl::ssl_delegate::ssl_delegate(
@@ -29,8 +30,12 @@ boost::network::http::impl::ssl_delegate::ssl_delegate(
       always_verify_peer_(always_verify_peer) {}
 
 void boost::network::http::impl::ssl_delegate::connect(
-    asio::ip::tcp::endpoint &endpoint, std::string host, boost::uint16_t source_port,
-    function<void(system::error_code const &)> handler) {
+    asio::ip::tcp::endpoint &endpoint, std::string host,
+    boost::uint16_t port, boost::uint16_t source_port,
+    function<void(system::error_code const &)> handler,
+    bool connect_via_proxy,
+    optional<std::string> proxy_username,
+    optional<std::string> proxy_password) {
   context_.reset(
       new asio::ssl::context(service_, asio::ssl::context::sslv23_client));
   if (ciphers_) {
@@ -68,17 +73,54 @@ void boost::network::http::impl::ssl_delegate::connect(
     socket_->set_verify_callback(boost::asio::ssl::rfc2818_verification(host));
   socket_->lowest_layer().async_connect(
       endpoint,
-      ::boost::bind(
+      service_.wrap(::boost::bind(
           &boost::network::http::impl::ssl_delegate::handle_connected,
           boost::network::http::impl::ssl_delegate::shared_from_this(),
-          asio::placeholders::error, handler));
+          asio::placeholders::error, handler,
+          connect_via_proxy, host, port, proxy_username, proxy_password)));
 }
 
 void boost::network::http::impl::ssl_delegate::handle_connected(
     system::error_code const &ec,
-    function<void(system::error_code const &)> handler) {
+    function<void(system::error_code const &)> handler,
+    bool connect_via_proxy,
+    std::string const &host,
+    boost::uint16_t port,
+    optional<std::string> proxy_username,
+    optional<std::string> proxy_password) {
   if (!ec) {
-    socket_->async_handshake(asio::ssl::stream_base::client, handler);
+    if (connect_via_proxy) {
+      // If PROXY establish connection via Proxy --> send CONNECT request
+      asio::streambuf command_streambuf;
+      // FIXME fill connect_streambuf with CONNECT request ...
+
+      {
+        std::ostream request_stream(&command_streambuf);
+
+        request_stream << "CONNECT " << host << ":" << port << " HTTP/1.1\r\n";
+        request_stream << "Host: " << host << ":" << port << "\r\n";
+
+        if (proxy_username && proxy_password) {
+          std::string user_pass = *proxy_username + ":" + *proxy_password;
+          std::string encoded_user_pass;
+
+          message::base64_encode(user_pass, encoded_user_pass);
+          request_stream << "Proxy-Authorization: Basic " << encoded_user_pass << "\r\n";
+        }
+
+        request_stream << "\r\n";
+      }
+
+      asio::async_write(socket_->next_layer(),
+                        command_streambuf,
+                        service_.wrap(::boost::bind(
+                            &boost::network::http::impl::ssl_delegate::handle_proxy_sent_request,
+                            boost::network::http::impl::ssl_delegate::shared_from_this(),
+                            handler, asio::placeholders::error, asio::placeholders::bytes_transferred)));
+    }
+    else {
+        socket_->async_handshake(asio::ssl::stream_base::client, handler);
+    }
   } else {
     handler(ec);
   }
@@ -108,6 +150,44 @@ void boost::network::http::impl::ssl_delegate::disconnect() {
 }
 
 boost::network::http::impl::ssl_delegate::~ssl_delegate() {}
+
+void boost::network::http::impl::ssl_delegate::handle_proxy_sent_request(
+    function<void(system::error_code const &)> handler,
+    boost::system::error_code const& ec,
+    std::size_t bytes_transferred) {
+  boost::asio::async_read_until(
+    socket_->next_layer(), response_buffer_, "\r\n\r\n",
+    service_.wrap(::boost::bind(
+        &boost::network::http::impl::ssl_delegate::handle_proxy_received_data,
+        boost::network::http::impl::ssl_delegate::shared_from_this(),
+        handler, asio::placeholders::error, asio::placeholders::bytes_transferred)));
+}
+
+void boost::network::http::impl::ssl_delegate::handle_proxy_received_data(
+    function<void(system::error_code const &)> handler,
+    boost::system::error_code const& ec,
+    std::size_t bytes_transferred) {
+  std::istream response_stream(&response_buffer_);
+  std::string http_tag;
+  boost::uint16_t http_status_code = 0;
+
+  response_stream >> http_tag;
+
+  if (http_tag.substr(0, 4) == "HTTP") {
+    response_stream >> http_status_code;
+  }
+
+  if (http_status_code == 200) {
+    socket_->async_handshake(asio::ssl::stream_base::client, handler);
+  }
+  else {
+    // FIXME set error code to something meaningful
+    boost::system::error_code ignored;
+    socket_->lowest_layer().close(ignored);
+
+    handler(ec);
+  }
+}
 
 #endif /* BOOST_NETWORK_PROTOCOL_HTTP_CLIENT_CONNECTION_SSL_DELEGATE_IPP_20110819 \
           */
